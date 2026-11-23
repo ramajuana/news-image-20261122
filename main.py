@@ -1,344 +1,614 @@
 #!/usr/bin/env python3
-"""THE WORLD TODAY - Sunday 22 November 2026. Stdlib only, deterministic."""
-import os, struct, zlib
+"""THE WORLD TODAY - Sunday 22 November 2026 in one image.
 
-W, H = 1000, 1000
-PAPER = (246, 241, 226); INK = (22, 22, 22); RED = (164, 28, 28)
-BLUE = (52, 74, 112); GREY = (105, 105, 96); PANEL = (255, 253, 244)
-TAN = (231, 222, 196); LGREY = (210, 205, 188)
+Deterministic, stdlib-only front page: own bitmap font, own drawing
+primitives, own zlib PNG encoder. No files read, no network, no clock,
+no randomness. Two runs produce byte-identical entry.png.
+"""
+import os
+import struct
+import zlib
 
-px = bytearray(bytes(PAPER) * (W * H))
+W = 1000
+H = 1000
 
-def set_px(x, y, c):
-    if 0 <= x < W and 0 <= y < H:
-        i = (y * W + x) * 3; px[i:i+3] = bytes(c)
+# ---------------------------------------------------------------- palette
+CREAM = (246, 239, 221)
+PAPER = (251, 247, 233)
+INK = (26, 23, 16)
+SOFT = (74, 66, 52)
+FAINT = (150, 138, 112)
+RED = (163, 31, 31)
+BLUE = (31, 74, 138)
+TEAL = (18, 110, 102)
+ORANGE = (214, 106, 24)
+GOLD = (176, 128, 22)
+PURPLE = (96, 54, 138)
+GREEN = (44, 110, 44)
+SKY = (198, 220, 232)
+SMOKE = (120, 116, 108)
 
-def rect(x, y, w, h, c):
-    for yy in range(y, y + h):
-        for xx in range(x, x + w):
-            set_px(xx, yy, c)
-
-def hline(x, y, w, c, t=1):
-    rect(x, y, w, t, c)
-
-def vline(x, y, h, c, t=1):
-    rect(x, y, t, h, c)
-
-def box(x, y, w, h, c, t=2):
-    hline(x, y, w, c, t); hline(x, y + h - t, w, c, t)
-    vline(x, y, h, c, t); vline(x + w - t, y, h, c, t)
-
-def circle(cx, cy, r, c):
-    for yy in range(cy - r, cy + r + 1):
-        for xx in range(cx - r, cx + r + 1):
-            if (xx - cx) ** 2 + (yy - cy) ** 2 <= r * r:
-                set_px(xx, yy, c)
-
-def tri(x, y, s, c):
-    for i in range(s):
-        rect(x + i // 2, y + i, max(1, s - i), 1, c)
-
-def ring(cx, cy, r, c, t=2):
-    for yy in range(cy - r - t, cy + r + t + 1):
-        for xx in range(cx - r - t, cx + r + t + 1):
-            d = ((xx - cx) ** 2 + (yy - cy) ** 2) ** 0.5
-            if abs(d - r) < t:
-                set_px(xx, yy, c)
-
-def diag(x0, y0, x1, y1, c, t=2):
-    steps = max(abs(x1 - x0), abs(y1 - y0), 1)
-    for i in range(steps + 1):
-        xx = x0 + (x1 - x0) * i // steps
-        yy = y0 + (y1 - y0) * i // steps
-        rect(xx, yy, t, t, c)
-
-def arc(cx, cy, r, c, t=2):
-    # right-side arc (signal wave)
-    for a in range(-55, 56):
-        import math
-        xx = int(cx + r * math.cos(math.radians(a)))
-        yy = int(cy + r * math.sin(math.radians(a)))
-        rect(xx, yy, t, t, c)
-
-def arc_left(cx, cy, r, c, t=2):
-    for a in range(125, 236):
-        import math
-        xx = int(cx + r * math.cos(math.radians(a)))
-        yy = int(cy + r * math.sin(math.radians(a)))
-        rect(xx, yy, t, t, c)
-
-# ---- 5x7 bitmap font (rows of 5 bits) ----
-G = {
-'A':("01110","10001","10001","11111","10001","10001","10001"),
-'B':("11110","10001","10001","11110","10001","10001","11110"),
-'C':("01110","10001","10000","10000","10000","10001","01110"),
-'D':("11100","10010","10001","10001","10001","10010","11100"),
-'E':("11111","10000","10000","11110","10000","10000","11111"),
-'F':("11111","10000","10000","11110","10000","10000","10000"),
-'G':("01110","10001","10000","10111","10001","10001","01111"),
-'H':("10001","10001","10001","11111","10001","10001","10001"),
-'I':("01110","00100","00100","00100","00100","00100","01110"),
-'J':("00111","00010","00010","00010","00010","10010","01100"),
-'K':("10001","10010","10100","11000","10100","10010","10001"),
-'L':("10000","10000","10000","10000","10000","10000","11111"),
-'M':("10001","11011","10101","10101","10001","10001","10001"),
-'N':("10001","11001","10101","10011","10001","10001","10001"),
-'O':("01110","10001","10001","10001","10001","10001","01110"),
-'P':("11110","10001","10001","11110","10000","10000","10000"),
-'Q':("01110","10001","10001","10001","10101","10010","01101"),
-'R':("11110","10001","10001","11110","10100","10010","10001"),
-'S':("01111","10000","10000","01110","00001","00001","11110"),
-'T':("11111","00100","00100","00100","00100","00100","00100"),
-'U':("10001","10001","10001","10001","10001","10001","01110"),
-'V':("10001","10001","10001","10001","10001","01010","00100"),
-'W':("10001","10001","10001","10101","10101","11011","10001"),
-'X':("10001","01010","00100","00100","01010","10001","10001"),
-'Y':("10001","01010","00100","00100","00100","00100","00100"),
-'Z':("11111","00001","00010","00100","01000","10000","11111"),
-'0':("01110","10001","10011","10101","11001","10001","01110"),
-'1':("00100","01100","00100","00100","00100","00100","01110"),
-'2':("01110","10001","00001","00110","01000","10000","11111"),
-'3':("11110","00001","00001","01110","00001","00001","11110"),
-'4':("00010","00110","01010","10010","11111","00010","00010"),
-'5':("11111","10000","11110","00001","00001","10001","01110"),
-'6':("00110","01000","10000","11110","10001","10001","01110"),
-'7':("11111","00001","00010","00100","01000","01000","01000"),
-'8':("01110","10001","10001","01110","10001","10001","01110"),
-'9':("01110","10001","10001","01111","00001","00010","01100"),
-' ':("00000",)*7,
-'.':("00000","00000","00000","00000","00000","01100","01100"),
-',':("00000","00000","00000","00000","01100","00100","01000"),
-'-':("00000","00000","00000","01110","00000","00000","00000"),
-"'":("00100","00100","01000","00000","00000","00000","00000"),
-':':("00000","01100","01100","00000","01100","01100","00000"),
-'/':("00001","00010","00010","00100","01000","01000","10000"),
-'+':("00000","00100","00100","01110","00100","00100","00000"),
-'$':("00100","01111","10100","01110","00101","11110","00100"),
-'%':("11001","11010","00010","00100","01000","01011","10011"),
-'(':("00010","00100","01000","01000","01000","00100","00010"),
-')':("01000","00100","00010","00010","00010","00100","01000"),
-'!':("00100","00100","00100","00100","00100","00000","00100"),
-'?':("01110","10001","00001","00110","00100","00000","00100"),
+# ---------------------------------------------------------------- font
+# 5x7 bitmap glyphs, '#' = ink. Uppercase only; text is uppercased on draw.
+FONT = {
+    "A": (".###.", "#...#", "#...#", "#####", "#...#", "#...#", "#...#"),
+    "B": ("####.", "#...#", "#...#", "####.", "#...#", "#...#", "####."),
+    "C": (".####", "#....", "#....", "#....", "#....", "#....", ".####"),
+    "D": ("####.", "#...#", "#...#", "#...#", "#...#", "#...#", "####."),
+    "E": ("#####", "#....", "#....", "####.", "#....", "#....", "#####"),
+    "F": ("#####", "#....", "#....", "####.", "#....", "#....", "#...."),
+    "G": (".####", "#....", "#....", "#.###", "#...#", "#...#", ".###."),
+    "H": ("#...#", "#...#", "#...#", "#####", "#...#", "#...#", "#...#"),
+    "I": (".###.", "..#..", "..#..", "..#..", "..#..", "..#..", ".###."),
+    "J": ("..###", "...#.", "...#.", "...#.", "...#.", "#..#.", ".##.."),
+    "K": ("#...#", "#..#.", "#.#..", "##...", "#.#..", "#..#.", "#...#"),
+    "L": ("#....", "#....", "#....", "#....", "#....", "#....", "#####"),
+    "M": ("#...#", "##.##", "#.#.#", "#.#.#", "#...#", "#...#", "#...#"),
+    "N": ("#...#", "##..#", "#.#.#", "#..##", "#...#", "#...#", "#...#"),
+    "O": (".###.", "#...#", "#...#", "#...#", "#...#", "#...#", ".###."),
+    "P": ("####.", "#...#", "#...#", "####.", "#....", "#....", "#...."),
+    "Q": (".###.", "#...#", "#...#", "#...#", "#.#.#", "#..#.", ".##.#"),
+    "R": ("####.", "#...#", "#...#", "####.", "#.#..", "#..#.", "#...#"),
+    "S": (".####", "#....", "#....", ".###.", "....#", "....#", "####."),
+    "T": ("#####", "..#..", "..#..", "..#..", "..#..", "..#..", "..#.."),
+    "U": ("#...#", "#...#", "#...#", "#...#", "#...#", "#...#", ".###."),
+    "V": ("#...#", "#...#", "#...#", "#...#", "#...#", ".#.#.", "..#.."),
+    "W": ("#...#", "#...#", "#...#", "#.#.#", "#.#.#", "##.##", "#...#"),
+    "X": ("#...#", ".#.#.", "..#..", "..#..", "..#..", ".#.#.", "#...#"),
+    "Y": ("#...#", "#...#", ".#.#.", "..#..", "..#..", "..#..", "..#.."),
+    "Z": ("#####", "....#", "...#.", "..#..", ".#...", "#....", "#####"),
+    "0": (".###.", "#...#", "#..##", "#.#.#", "##..#", "#...#", ".###."),
+    "1": ("..#..", ".##..", "..#..", "..#..", "..#..", "..#..", ".###."),
+    "2": (".###.", "#...#", "....#", "..##.", ".#...", "#....", "#####"),
+    "3": ("#####", "...#.", "..#..", "...#.", "....#", "#...#", ".###."),
+    "4": ("...#.", "..##.", ".#.#.", "#..#.", "#####", "...#.", "...#."),
+    "5": ("#####", "#....", "####.", "....#", "....#", "#...#", ".###."),
+    "6": (".###.", "#....", "#....", "####.", "#...#", "#...#", ".###."),
+    "7": ("#####", "....#", "...#.", "..#..", ".#...", ".#...", ".#..."),
+    "8": (".###.", "#...#", "#...#", ".###.", "#...#", "#...#", ".###."),
+    "9": (".###.", "#...#", "#...#", ".####", "....#", "....#", ".###."),
+    " ": (".....", ".....", ".....", ".....", ".....", ".....", "....."),
+    ".": (".....", ".....", ".....", ".....", ".....", ".....", "..#.."),
+    ",": (".....", ".....", ".....", ".....", "..#..", "..#..", ".#..."),
+    ":": (".....", "..#..", "..#..", ".....", "..#..", "..#..", "....."),
+    ";": (".....", "..#..", "..#..", ".....", "..#..", "..#..", ".#..."),
+    "'": ("..#..", "..#..", ".#...", ".....", ".....", ".....", "....."),
+    "-": (".....", ".....", ".....", "#####", ".....", ".....", "....."),
+    "+": (".....", "..#..", "..#..", ".###.", "..#..", "..#..", "....."),
+    "/": ("....#", "....#", "...#.", "..#..", ".#...", "#....", "#...."),
+    "(": ("...#.", "..#..", ".#...", ".#...", ".#...", "..#..", "...#."),
+    ")": (".#...", "..#..", "...#.", "...#.", "...#.", "..#..", ".#..."),
+    "$": ("..#..", ".####", "#.#.#", ".###.", "#.#.#", "####.", "..#.."),
+    "%": ("##..#", "##.#.", "....#", "...#.", "..#..", ".#...", "#.##."),
+    "!": ("..#..", "..#..", "..#..", "..#..", "..#..", ".....", "..#.."),
+    "?": (".###.", "#...#", "....#", "...#.", "..#..", ".....", "..#.."),
+    "&": (".##..", "#..#.", "#.#..", ".#...", "#.#.#", "#..#.", ".##.#"),
+    "*": (".....", "#.#.#", ".###.", "#####", ".###.", "#.#.#", "....."),
+    "~": (".....", ".....", ".#.#.", "#.#.#", ".....", ".....", "....."),
+    '"': ("#...#", "#...#", ".....", ".....", ".....", ".....", "....."),
+    "\u00b7": (".....", ".....", ".....", "..#..", ".....", ".....", "....."),
 }
+ALIASES = {"\u2019": "'", "\u2018": "'", "\u2014": "-", "\u2013": "-",
+           "\u2026": ".", "\u00a0": " "}
 
-def tw(s, sc):
-    return len(s) * (5 * sc + sc) - (sc if s else 0)
 
-def draw_text(x, y, s, sc=1, c=INK, bold=False):
-    s = s.upper()
+def clean(text):
+    out = []
+    for ch in text.upper():
+        ch = ALIASES.get(ch, ch)
+        out.append(ch if ch in FONT else " ")
+    return "".join(out)
+
+
+def text_w(text, sx):
+    t = clean(text)
+    if not t:
+        return 0
+    return len(t) * 6 * sx - sx
+
+
+def draw_text(px, x, y, text, sx, sy, color, bold=False):
+    t = clean(text)
+    off = max(1, sx // 2) if bold else 0
     cx = x
-    for ch in s:
-        g = G.get(ch, G[' '])
-        for r in range(7):
-            for col in range(5):
-                if g[r][col] == '1':
-                    rect(cx + col * sc, y + r * sc, sc, sc, c)
+    for ch in t:
+        glyph = FONT[ch]
+        for gy in range(7):
+            row = glyph[gy]
+            for gx in range(5):
+                if row[gx] == "#":
+                    px.fill(cx + gx * sx, y + gy * sy, sx, sy, color)
                     if bold:
-                        rect(cx + col * sc + sc // 2, y + r * sc, max(1, sc // 2), sc, c)
-        cx += 6 * sc
-    return cx
+                        px.fill(cx + gx * sx + off, y + gy * sy, sx, sy, color)
+        cx += 6 * sx
+    return cx - x
 
-def centered(y, s, sc, c=INK, bold=False):
-    draw_text((W - tw(s, sc)) // 2, y, s, sc, c, bold)
 
-def wrap(s, sc, maxw):
-    words, lines, cur = s.upper().split(), [], ""
-    for w_ in words:
-        t = (cur + " " + w_).strip()
-        if tw(t, sc) <= maxw:
-            cur = t
+def draw_centered(px, cx, y, text, sx, sy, color, bold=False):
+    w = text_w(text, sx)
+    return draw_text(px, cx - w // 2, y, text, sx, sy, color, bold)
+
+
+def wrap(text, max_chars):
+    words = text.split()
+    lines = []
+    cur = ""
+    for word in words:
+        trial = word if not cur else cur + " " + word
+        if len(trial) <= max_chars:
+            cur = trial
         else:
-            if cur: lines.append(cur)
-            cur = w_
-    if cur: lines.append(cur)
+            if cur:
+                lines.append(cur)
+            cur = word
+    if cur:
+        lines.append(cur)
     return lines
 
-def block(x, y, s, sc, maxw, c=INK, lh=None, maxlines=99, bold=False):
-    lh = lh or (7 * sc + 3 * sc // 2 + 2)
-    lines = wrap(s, sc, maxw)[:maxlines]
-    for i, ln in enumerate(lines):
-        draw_text(x, y + i * lh, ln, sc, c, bold)
-    return y + len(lines) * lh
 
-# ---- Masthead ----
-centered(10, "THE WORLD TODAY", 2, RED, True)
-centered(34, "SUNDAY 22 NOVEMBER 2026", 5, INK, True)
-centered(78, "32 STORIES - 6 REGIONS - EVERY ONE FROM THIS SUNDAY", 2, BLUE)
-hline(16, 104, W - 32, INK, 3); hline(16, 110, W - 32, RED, 1)
+# ---------------------------------------------------------------- canvas
+class Canvas:
+    def __init__(self):
+        self.buf = bytearray(bytes(CREAM) * (W * H))
 
-# Timeline strip
-tl = [("OVERNIGHT", "CHINA HITS BACK ON FCC BAN"),
-      ("MORNING", "AUKUS ROW - INDIA 629-6"),
-      ("MIDDAY", "VOYAGER 1 NOW ONE LIGHT-DAY FROM EARTH"),
-      ("EVENING", "THOUSANDS MARCH IN LISBON OVER LIVING COSTS")]
-for i, (a, b) in enumerate(tl):
-    x = 16 + i * 243
-    rect(x, 116, 234, 42, TAN); box(x, 116, 234, 42, INK, 1)
-    draw_text(x + 8, 121, a, 1, RED, True)
-    block(x + 8, 133, b, 1, 218, INK, lh=10, maxlines=2)
+    def set(self, x, y, color):
+        if 0 <= x < W and 0 <= y < H:
+            i = (y * W + x) * 3
+            self.buf[i:i + 3] = bytes(color)
 
-# ---- Lead tier ----
-leads = [
- ("MIDDLE EAST - CONFLICT", "BAHRAIN SAYS IRANIAN ATTACK HITS PLANT",
-  "AIR DEFENCES INTERCEPT ATTACKS AS SMOKE RISES OVER INDUSTRIAL SITE.", "CONFIRMED - REUTERS"),
- ("ASIA - POLITICS", "CHINA OPPOSES US FCC BAN ON TELECOMS",
-  "COMMERCE MINISTRY ON SUNDAY FIRMLY OPPOSES BAN ON DIRECT US NUMBERS.", "CONFIRMED - REUTERS"),
- ("OCEANIA - DEFENCE", "AUSTRALIA SLAMS US REPORT ON AUKUS",
-  "MARLES CRITICISES CBO CLAIM PACT CUTS US ATTACK SUBMARINES.", "CONFIRMED - REUTERS"),
- ("EUROPE - CLIMATE", "FOSSIL FUEL FIGHT DEADLOCKS COP31",
-  "NEARLY 200 COUNTRIES STUCK IN ANTALYA ON A NEW CLIMATE DEAL.", "CONFIRMED - BBC"),
+    def fill(self, x, y, w, h, color):
+        x0 = max(0, x)
+        y0 = max(0, y)
+        x1 = min(W, x + w)
+        y1 = min(H, y + h)
+        if x1 <= x0 or y1 <= y0:
+            return
+        row = bytes(color) * (x1 - x0)
+        for yy in range(y0, y1):
+            i = (yy * W + x0) * 3
+            self.buf[i:i + len(row)] = row
+
+    def hline(self, x, y, w, color, th=1):
+        self.fill(x, y, w, th, color)
+
+    def vline(self, x, y, h, color, th=1):
+        self.fill(x, y, th, h, color)
+
+    def box(self, x, y, w, h, color, th=1):
+        self.hline(x, y, w, color, th)
+        self.hline(x, y + h - th, w, color, th)
+        self.vline(x, y, h, color, th)
+        self.vline(x + w - th, y, h, color, th)
+
+    def circle(self, cx, cy, r, color, thick=0):
+        for yy in range(cy - r, cy + r + 1):
+            for xx in range(cx - r, cx + r + 1):
+                d2 = (xx - cx) * (xx - cx) + (yy - cy) * (yy - cy)
+                if thick:
+                    if (r - thick) * (r - thick) <= d2 <= r * r:
+                        self.set(xx, yy, color)
+                elif d2 <= r * r:
+                    self.set(xx, yy, color)
+
+    def tri(self, x1, y1, x2, y2, x3, y3, color):
+        minx = max(0, min(x1, x2, x3))
+        maxx = min(W - 1, max(x1, x2, x3))
+        miny = max(0, min(y1, y2, y3))
+        maxy = min(H - 1, max(y1, y2, y3))
+        d = (y2 - y3) * (x1 - x3) + (x3 - x2) * (y1 - y3)
+        if d == 0:
+            return
+        for yy in range(miny, maxy + 1):
+            for xx in range(minx, maxx + 1):
+                w1 = ((y2 - y3) * (xx - x3) + (x3 - x2) * (yy - y3)) / d
+                w2 = ((y3 - y1) * (xx - x3) + (x1 - x3) * (yy - y3)) / d
+                w3 = 1.0 - w1 - w2
+                if w1 >= 0 and w2 >= 0 and w3 >= 0:
+                    self.set(xx, yy, color)
+
+    def line(self, x1, y1, x2, y2, color, th=2):
+        steps = max(abs(x2 - x1), abs(y2 - y1), 1)
+        for i in range(steps + 1):
+            xx = x1 + (x2 - x1) * i // steps
+            yy = y1 + (y2 - y1) * i // steps
+            self.fill(xx - th // 2, yy - th // 2, th, th, color)
+
+
+def png_bytes(px):
+    raw = bytearray()
+    stride = W * 3
+    for yy in range(H):
+        raw.append(0)
+        raw += px.buf[yy * stride:(yy + 1) * stride]
+
+    def chunk(tag, data):
+        c = struct.pack(">I", len(data)) + tag + data
+        c += struct.pack(">I", zlib.crc32(tag + data) & 0xFFFFFFFF)
+        return c
+
+    ihdr = struct.pack(">IIBBBBB", W, H, 8, 2, 0, 0, 0)
+    out = b"\x89PNG\r\n\x1a\n"
+    out += chunk(b"IHDR", ihdr)
+    out += chunk(b"IDAT", zlib.compress(bytes(raw), 9))
+    out += chunk(b"IEND", b"")
+    return out
+
+
+# ---------------------------------------------------------------- pictograms
+def pic_cop31(px, x, y, w, h):
+    """Globe with a cracked thermometer over it."""
+    px.fill(x, y, w, h, (233, 226, 199))
+    cx, cy, r = x + 92, y + h // 2, 37
+    px.circle(cx, cy, r, BLUE)
+    px.circle(cx, cy, r - 4, SKY)
+    # continents: rough flat blobs
+    for (bx, by, bw, bh) in ((cx - 30, cy - 26, 26, 14), (cx - 12, cy - 30, 16, 10),
+                             (cx + 8, cy - 14, 24, 16), (cx - 26, cy + 2, 18, 20),
+                             (cx + 16, cy + 12, 20, 12), (cx - 2, cy + 24, 12, 8)):
+        px.fill(bx, by, bw, bh, GREEN)
+    px.hline(cx - r, cy, 2 * r, BLUE, 2)
+    px.vline(cx, cy - r, 2 * r, BLUE, 2)
+    # thermometer, right side
+    tx = x + 196
+    px.fill(tx, y + 8, 20, 52, PAPER)
+    px.box(tx, y + 8, 20, 52, INK, 2)
+    px.fill(tx + 5, y + 30, 10, 26, RED)
+    px.circle(tx + 10, y + 62, 13, PAPER)
+    px.circle(tx + 10, y + 62, 10, RED)
+    # crack across globe + thermometer
+    pts = [(cx - 30, cy - 34), (cx - 12, cy - 12), (cx - 22, cy + 4),
+           (cx - 2, cy + 22), (cx + 6, cy + 33)]
+    for i in range(len(pts) - 1):
+        px.line(pts[i][0], pts[i][1], pts[i + 1][0], pts[i + 1][1], RED, 3)
+    px.line(tx + 2, y + 14, tx + 12, y + 28, INK, 3)
+    px.line(tx + 12, y + 28, tx + 4, y + 40, INK, 3)
+    # heat ticks
+    for i in range(4):
+        px.hline(tx + 26, y + 14 + i * 12, 10, RED, 3)
+
+
+def pic_factory(px, x, y, w, h):
+    """Candy factory with flames and smoke."""
+    px.fill(x, y, w, h, (238, 228, 205))
+    base = y + h - 6
+    # smoke
+    for (sx, sy, sr) in ((x + 66, y + 11, 10), (x + 84, y + 13, 12), (x + 104, y + 10, 9)):
+        px.circle(sx, sy, sr, SMOKE)
+    # chimney
+    px.fill(x + 52, y + 18, 18, 40, (140, 74, 52))
+    px.fill(x + 48, y + 14, 26, 6, INK)
+    # sawtooth roof factory
+    fx, fw = x + 30, 200
+    fy = base - 44
+    px.fill(fx, fy, fw, 44, (196, 178, 140))
+    for i in range(4):
+        px.tri(fx + i * 50, fy, fx + i * 50 + 25, fy - 16, fx + i * 50 + 50, fy, (120, 96, 64))
+    px.box(fx, fy, fw, 44, INK, 2)
+    # windows, some lit, some black
+    for i in range(6):
+        col = (250, 214, 110) if i % 2 == 0 else (52, 48, 44)
+        px.fill(fx + 12 + i * 31, fy + 12, 18, 14, col)
+    px.fill(fx + 84, base - 18, 30, 18, (84, 62, 40))
+    # flames along the roof line
+    for i in range(7):
+        fx0 = fx + 14 + i * 27
+        px.tri(fx0, fy - 2, fx0 + 9, fy - 22, fx0 + 18, fy - 2, ORANGE)
+        px.tri(fx0 + 4, fy - 2, fx0 + 9, fy - 15, fx0 + 14, fy - 2, (245, 178, 44))
+    # ground line + stretcher marks
+    px.hline(x + 8, base, w - 16, INK, 2)
+    px.fill(x + 244, base - 10, 34, 5, RED)
+    px.fill(x + 250, base - 16, 5, 6, RED)
+    px.fill(x + 264, base - 16, 5, 6, RED)
+
+
+def pic_dymer(px, x, y, w, h):
+    """Apartment block, one corner gone, rubble, drone overhead."""
+    px.fill(x, y, w, h, (226, 230, 233))
+    base = y + h - 4
+    bx, bw = x + 74, 118
+    by = y + 6
+    bh = base - by - 10
+    px.fill(bx, by, bw, bh, (178, 172, 160))
+    px.box(bx, by, bw, bh, INK, 2)
+    # window grid: 4 rows inside the block
+    for r_i in range(4):
+        for c_i in range(4):
+            wx = bx + 10 + c_i * 27
+            wy = by + 7 + r_i * 12
+            if r_i < 2 and c_i > 1:
+                continue  # blasted corner: no windows left
+            col = (250, 226, 140) if (r_i + c_i) % 3 == 0 else (70, 76, 84)
+            px.fill(wx, wy, 16, 8, col)
+    # collapsed corner: jagged dark wedge
+    px.tri(bx + bw - 52, by, bx + bw, by, bx + bw, by + 34, (52, 48, 44))
+    px.tri(bx + bw - 52, by, bx + bw, by + 34, bx + bw - 20, by + 22, (52, 48, 44))
+    px.line(bx + 14, by + 20, bx + 28, by + 34, INK, 3)
+    px.line(bx + 28, by + 34, bx + 20, by + 46, INK, 3)
+    # rubble pile
+    for i in range(6):
+        rx = bx - 8 + i * 22
+        px.tri(rx, base, rx + 12, base - 12 - (i % 3) * 4, rx + 24, base, SMOKE)
+    px.hline(x + 8, base, w - 16, INK, 2)
+    # drone silhouette top right
+    dx, dy = x + w - 52, y + 18
+    px.fill(dx - 10, dy - 4, 20, 8, INK)
+    for (ox, oy) in ((-22, -10), (14, -10), (-22, 6), (14, 6)):
+        px.line(dx, dy, dx + ox + 4, dy + oy + 2, INK, 2)
+        px.hline(dx + ox - 2, dy + oy, 12, INK, 3)
+    px.vline(dx - 1, dy + 4, 10, RED, 3)
+
+
+# ---------------------------------------------------------------- content
+LEADS = [
+    {
+        "num": "01", "tag": "GLOBAL \u00b7 CLIMATE", "color": RED, "pic": pic_cop31,
+        "head": "COP31 COLLAPSES: NO DEAL IN ANTALYA",
+        "detail": "EU, Panama, Marshall Islands and Norway reject the "
+                  "'Antalya Pact'; fossil-fuel language stripped. First "
+                  "collapse since Copenhagen 2009.",
+        "src": "CONFIRMED \u00b7 REUTERS / AP",
+    },
+    {
+        "num": "02", "tag": "ASIA \u00b7 DISASTER", "color": ORANGE, "pic": pic_factory,
+        "head": "JAVA CANDY-FACTORY FIRE: 24 BODY BAGS",
+        "detail": "Police carry 24 body bags from the Milkita factory "
+                  "ruins at Cikande, Banten. About 36 workers still "
+                  "missing; victims named only by DNA.",
+        "src": "CONFIRMED \u00b7 BBC / REUTERS",
+    },
+    {
+        "num": "03", "tag": "EUROPE \u00b7 WAR", "color": BLUE, "pic": pic_dymer,
+        "head": "RUSSIAN DRONE HITS DYMER FLATS",
+        "detail": "Drone slams a five-storey block in Dymer, Kyiv "
+                  "region, early Sunday: 2 dead, up to 14 - incl. two "
+                  "children - trapped, Zelenskiy says.",
+        "src": "CONFIRMED \u00b7 REUTERS / AJ",
+    },
 ]
-for i, (tag, head, det, src) in enumerate(leads):
-    x = 16 + i * 243; y = 168
-    rect(x, y, 234, 262, PANEL); box(x, y, 234, 262, INK, 2)
-    # illustration
-    rect(x + 10, y + 10, 214, 66, TAN)
-    if i == 0:
-        # Factory: block + chimneys, smoke plume, starburst interception
-        rect(x + 24, y + 50, 92, 20, INK)
-        rect(x + 24, y + 46, 92, 4, INK)
-        rect(x + 36, y + 26, 12, 24, INK)
-        rect(x + 62, y + 32, 10, 18, INK)
-        # windows
-        rect(x + 82, y + 56, 8, 8, PANEL); rect(x + 96, y + 56, 8, 8, PANEL)
-        # smoke plume from main chimney
-        circle(x + 42, y + 20, 6, GREY); circle(x + 52, y + 16, 8, GREY)
-        circle(x + 64, y + 14, 6, GREY); circle(x + 74, y + 16, 4, LGREY)
-        # starburst / flak burst in sky to the right
-        bcx, bcy = x + 168, y + 32
-        circle(bcx, bcy, 5, RED)
-        hline(bcx - 16, bcy - 1, 32, RED, 3); vline(bcx - 1, bcy - 16, 32, RED, 3)
-        diag(bcx - 11, bcy - 11, bcx - 6, bcy - 6, RED, 3); diag(bcx + 6, bcy - 6, bcx + 11, bcy - 11, RED, 3)
-        diag(bcx - 11, bcy + 11, bcx - 6, bcy + 6, RED, 3); diag(bcx + 6, bcy + 6, bcx + 11, bcy + 11, RED, 3)
-        circle(x + 188, y + 56, 3, BLUE); circle(x + 140, y + 54, 3, BLUE)
-    elif i == 1:
-        # Telecom mast with signal arcs, prohibition circle + slash
-        vline(x + 92, y + 24, 42, INK, 4)
-        hline(x + 76, y + 34, 36, INK, 3); hline(x + 80, y + 46, 28, INK, 3)
-        diag(x + 78, y + 66, x + 94, y + 48, INK, 3); diag(x + 108, y + 66, x + 94, y + 48, INK, 3)
-        rect(x + 70, y + 66, 48, 3, INK)
-        circle(x + 94, y + 22, 4, INK)
-        arc(x + 94, y + 22, 10, BLUE, 2); arc(x + 94, y + 22, 17, BLUE, 2)
-        arc_left(x + 94, y + 22, 10, BLUE, 2); arc_left(x + 94, y + 22, 17, BLUE, 2)
-        # bold red prohibition over the mast on the right side
-        ring(x + 156, y + 43, 24, RED, 4)
-        diag(x + 139, y + 60, x + 173, y + 26, RED, 5)
-    elif i == 2:
-        # Submarine: hull, conning tower, periscope, waves
-        # waves on surface (top) and below hull
-        for wx in range(x + 22, x + 200, 18):
-            hline(wx, y + 18, 10, BLUE, 2); hline(wx + 4, y + 21, 6, BLUE, 2)
-            hline(wx, y + 68, 10, BLUE, 2); hline(wx + 4, y + 65, 6, BLUE, 2)
-        # hull
-        rect(x + 36, y + 48, 132, 14, BLUE)
-        tri(x + 166, y + 48, 14, BLUE)
-        rect(x + 28, y + 50, 10, 10, BLUE)
-        # conning tower + periscope
-        rect(x + 82, y + 36, 36, 12, BLUE)
-        vline(x + 98, y + 24, 12, BLUE, 3); hline(x + 98, y + 24, 13, BLUE, 3)
-        # portholes
-        circle(x + 58, y + 55, 3, PANEL); circle(x + 78, y + 55, 3, PANEL)
-        circle(x + 128, y + 55, 3, PANEL); circle(x + 148, y + 55, 3, PANEL)
+
+TIER2 = [
+    ("04", "AFRICA \u00b7 WAR", RED,
+     "SEA DRONES HIT CORVETTE AT BENGHAZI",
+     "Suspected Ukrainian drones hit Russia's Merkury; capsizes, 10 hurt."),
+    ("05", "EUROPE \u00b7 WAR", BLUE,
+     "SPARTA II TOWED AWAY, STILL BURNING",
+     "Russian cargo ship hit by drones in Gulf of Finland; Kaliningrad alert."),
+    ("06", "EUROPE \u00b7 SECURITY", BLUE,
+     "POLAND CONFIRMS KH-101 MISSILES",
+     "Prosecutors: Friday's intruders were Russian Kh-101s. NATO meets Monday."),
+    ("07", "MIDDLE EAST \u00b7 CONFLICT", PURPLE,
+     "SETTLERS TORCH CARS NEAR RAMALLAH",
+     "12 Palestinian vehicles burned in 4 villages; 'terrorism' - Eisenkot."),
+    ("08", "AFRICA \u00b7 CONFLICT", RED,
+     "DRONE STRIKES HIT KHARTOUM, UN BASE",
+     "UN facility damaged, staff inside; 3 killed in Omdurman. Saudis condemn."),
+    ("09", "OCEANIA \u00b7 DEFENCE", TEAL,
+     "MARLES TO US ON AUKUS: 'WRONG'",
+     "Defence minister rejects CBO report on sub sales, A$368bn programme."),
+    ("10", "EUROPE \u00b7 SPORT", GREEN,
+     "LIVERPOOL 4-0 MAN UNITED",
+     "Yoro off in 8'; Szoboszlai, Wirtz, Ngumoha, Munoz score in rout."),
+]
+
+NUMBERS = [
+    "24 BODY BAGS RECOVERED",
+    "~36 WORKERS STILL MISSING",
+    "4-0 AT ANFIELD, UTD 19TH",
+    "$450M SKUBAL METS DEAL",
+    "AQI 538 IN LAHORE",
+    "258 HOUSE SEATS FOR DEMS",
+    "90+ NATIONS SIGN PLEDGE",
+]
+
+BRIEFS_LEFT = [
+    "11 ME CLAIM: HOUTHIS SAY THEY STRUCK SAUDI RABIGH OIL REFINERY",
+    "12 ME CLAIM: IRAN SAYS 2 MORE TANKERS HIT MINES NEAR HORMUZ",
+    "13 ME CLAIM: BAHRAIN SAYS IRANIAN DEBRIS FIRED A CIVIL SITE, 2 HURT",
+    "14 ME FIRE AT HARTHA POWER PLANT NEAR BASRA KILLS 4, INJURES 35",
+    "15 EU ZELENSKYY: CRIMEA BRIDGE STRIKES A 'FAIR RESPONSE'",
+    "16 EU POLAND: RUSSIA TWICE TRIED TO KILL A RAPPER ON POLISH SOIL",
+    "17 NA DEMOCRATS REACH 258 HOUSE SEATS, BIGGEST SINCE EARLY 1990S",
+    "18 NA TRUMP ORDER: CONTRACTORS MUST FLAG OVERSIGHT REQUESTS",
+    "19 NA TRUMP: WORK WITH DEMOCRATS ON 10% CREDIT-CARD RATE CAP",
+    "20 NA DNI CLAYTON: 'PUTIN IS NOT AMERICA'S FRIEND' ON UKRAINE",
+    "21 NA BESSENT: US SEEKS NVIDIA ANSWERS ON CHIP SALES TO CHINA",
+    "22 NA FBI PROBES APPARENT HACK OF CRIMINAL-JUSTICE DATABASE",
+    "23 NA ICE ARRESTS ON SEA-TAC JETWAY CONDEMNED; FATHER, GIRL HELD",
+]
+BRIEFS_RIGHT = [
+    "24 NA COURT: PREGNANT-WORKER ACCOMMODATION LAW UNCONSTITUTIONAL",
+    "25 AM MEXICO CAPTURES 'EL CHAPO ISIDRO' IN SINALOA RAID; 11 KILLED",
+    "26 AS S. KOREA EDUCATION MINISTER QUITS OVER AI-CHEATING EXAM RULES",
+    "27 AS LAHORE WORLD'S MOST POLLUTED MAJOR CITY SUNDAY, AQI 538",
+    "28 AS OKINAWA FETES RESTORED SHURI CASTLE HALL, 7 YRS AFTER FIRE",
+    "29 AF WHO: FIGHTING NEAR CONGO EBOLA ZONE DISRUPTED RESPONSE",
+    "30 MK GULF BOURSES SLIDE: SAUDI -2.0%, EGYPT -2.9%, QATAR -1.6%",
+    "31 TE ANTHROPIC'S RECORD IPO RAISES HOPES OF NONPROFIT WINDFALL",
+    "32 SP VERSTAPPEN WINS LAS VEGAS GP THRILLER, 35 LEAD CHANGES",
+    "33 SP KANSAS CITY WIN FIRST NWSL TITLE, 2-1 OVER WASHINGTON",
+    "34 SP SKUBAL AGREES RECORD $450M, 9-YEAR DEAL WITH THE NY METS",
+    "35 CU 'HUNGER GAMES' PREQUEL GOES BIG AT BOX OFFICE DESPITE GTA VI",
+    "36 EU ITALIAN JEWELLER PAOLO BULGARI DIES AGED 89",
+]
+
+DATE_CHECK = ("NOT SUNDAY, SO NOT IN THIS PAPER: BEPICOLOMBO REACHED MERCURY - "
+              "SAT 21 NOV \u00b7 GTA VI $3.79BN SALES RECORD - FRI 20 NOV \u00b7 FCC VOTE ON "
+              "CHINESE TELECOMS - THU 19 NOV \u00b7 ICJ ROHINGYA RULING - THU 19 NOV \u00b7 "
+              "PERU M6.7 QUAKE - FRI 20 NOV \u00b7 ENGLAND 37-12 ALL BLACKS AND NIGERIA "
+              "BOAT - SAT 21 NOV \u00b7 SHENZHEN SUMMIT - 19-20 NOV")
+
+
+# ---------------------------------------------------------------- layout
+MX = 26            # side margin
+CW = W - 2 * MX    # 948 content width
+
+
+def masthead(px):
+    px.hline(MX, 14, CW, INK, 3)
+    px.hline(MX, 20, CW, INK, 1)
+    draw_centered(px, W // 2, 27, "THE WORLD TODAY", 2, 2, INK, bold=True)
+    draw_text(px, MX, 27, "EST. 2026", 1, 1, SOFT)
+    draw_text(px, W - MX - text_w("ONE DAY, ONE PAGE", 1), 27,
+              "ONE DAY, ONE PAGE", 1, 1, SOFT)
+    # the date: biggest type on the page
+    draw_centered(px, W // 2, 50, "SUNDAY 22 NOVEMBER 2026", 6, 6, INK, bold=True)
+    draw_centered(px, W // 2, 100,
+                  "36 STORIES \u00b7 7 REGIONS \u00b7 EVERY ONE FROM THIS SUNDAY",
+                  1, 2, RED, bold=True)
+    px.hline(MX, 122, CW, INK, 1)
+    px.hline(MX, 126, CW, INK, 3)
+
+
+def timeline(px):
+    y = 136
+    px.box(MX, y, CW, 34, INK, 1)
+    px.fill(MX, y, 118, 34, INK)
+    draw_text(px, MX + 10, y + 6, "SUNDAY IN", 1, 1, CREAM, bold=True)
+    draw_text(px, MX + 10, y + 20, "UTC TIME", 1, 1, CREAM, bold=True)
+    x0, x1 = MX + 140, W - MX - 16
+    ty = y + 21
+    px.hline(x0, ty, x1 - x0, SOFT, 2)
+    for hr in range(0, 25, 4):
+        tx = x0 + (x1 - x0) * hr // 24
+        px.vline(tx, ty - 3, 7, INK, 2)
+        lbl = "%02d:00" % hr
+        draw_text(px, tx - text_w(lbl, 1) // 2, y + 25, lbl, 1, 1, SOFT)
+    pins = [
+        (1, "KHARTOUM DRONES", RED),
+        (4, "DYMER HIT", BLUE),
+        (9, "JAVA SEARCH", ORANGE),
+        (15, "RAMALLAH ARSON", PURPLE),
+        (19, "COP31 ENDS", RED),
+        (22, "LIV 4-0 UTD", GREEN),
+    ]
+    for hr, lbl, col in pins:
+        tx = x0 + (x1 - x0) * hr // 24
+        px.circle(tx, ty, 4, col)
+        lw = text_w(lbl, 1)
+        lx = min(max(tx - lw // 2, MX + 124), W - MX - lw)
+        draw_text(px, lx, y + 5, lbl, 1, 1, col, bold=True)
+
+
+def leads(px):
+    y = 182
+    pw = (CW - 24) // 3
+    for i, lead in enumerate(LEADS):
+        x = MX + i * (pw + 12)
+        if i:
+            px.vline(x - 7, y, 196, FAINT, 1)
+        lead["pic"](px, x, y, pw, 76)
+        px.box(x, y, pw, 76, INK, 1)
+        draw_text(px, x, y + 84, lead["num"] + "  " + lead["tag"], 1, 2,
+                  lead["color"], bold=True)
+        hy = y + 104
+        for ln in wrap(lead["head"], 24):
+            draw_text(px, x, hy, ln, 2, 2, INK, bold=True)
+            hy += 17
+        dy = hy + 3
+        for ln in wrap(lead["detail"], 50):
+            draw_text(px, x, dy, ln, 1, 2, SOFT)
+            dy += 15
+        draw_text(px, x, y + 196 - 7, lead["src"], 1, 1, lead["color"], bold=True)
+    px.hline(MX, y + 204, CW, INK, 2)
+
+
+def tier2(px):
+    y = 398
+    cw4 = (CW - 36) // 4
+    cells = list(TIER2)
+    for idx in range(8):
+        col = idx % 4
+        row = idx // 4
+        x = MX + col * (cw4 + 12)
+        yy = y + row * 84
+        if col:
+            px.vline(x - 7, yy, 74, FAINT, 1)
+        if idx < 7:
+            num, tag, color, head, det = cells[idx]
+            draw_text(px, x, yy, num + " " + tag, 1, 1, color, bold=True)
+            hy = yy + 11
+            for ln in wrap(head, 37)[:2]:
+                draw_text(px, x, hy, ln, 1, 2, INK, bold=True)
+                hy += 16
+            for ln in wrap(det, 36)[:2]:
+                draw_text(px, x, hy, ln, 1, 1, SOFT)
+                hy += 9
+        else:
+            px.fill(x - 4, yy - 4, cw4 + 8, 78, (238, 228, 199))
+            px.box(x - 4, yy - 4, cw4 + 8, 78, INK, 1)
+            draw_text(px, x + 4, yy + 2, "BY THE NUMBERS", 1, 2, RED, bold=True)
+            ny = yy + 20
+            for n in NUMBERS:
+                draw_text(px, x + 4, ny, "\u00b7 " + n, 1, 1, INK)
+                ny += 8
+    px.hline(MX, y + 168, CW, INK, 2)
+
+
+def briefs(px):
+    y = 578
+    draw_text(px, MX, y, "ALSO ON SUNDAY", 2, 2, INK, bold=True)
+    note = "ITEMS 11-36 \u00b7 WIRES OF THE DAY"
+    draw_text(px, W - MX - text_w(note, 1), y + 7, note, 1, 1, SOFT)
+    px.hline(MX, y + 18, CW, FAINT, 1)
+    colw = (CW - 16) // 2
+    for j, group in enumerate((BRIEFS_LEFT, BRIEFS_RIGHT)):
+        x = MX + j * (colw + 16)
+        if j:
+            px.vline(x - 9, y + 26, 268, FAINT, 1)
+        yy = y + 26
+        for b in group:
+            num, rest = b.split(" ", 1)
+            draw_text(px, x, yy, num, 1, 2, RED, bold=True)
+            lines = wrap(rest, 71)
+            for k, ln in enumerate(lines):
+                draw_text(px, x + 20, yy + k * 16, ln, 1, 2, INK)
+            yy += len(lines) * 16 + 5
+
+
+def bottom(px):
+    y = 884
+    bw = 612
+    px.box(MX, y, bw, 74, INK, 1)
+    px.fill(MX, y, 118, 16, RED)
+    draw_text(px, MX + 8, y + 4, "DATE CHECK", 1, 1, CREAM, bold=True)
+    draw_text(px, MX + 126, y + 4, "FAMOUS STORIES WE LEFT OUT - WRONG DAY",
+              1, 1, RED, bold=True)
+    yy = y + 22
+    for ln in wrap(DATE_CHECK, 99):
+        draw_text(px, MX + 8, yy, ln, 1, 1, SOFT)
+        yy += 9
+    x2 = MX + bw + 14
+    px.box(x2, y, W - MX - x2, 74, INK, 1)
+    draw_text(px, x2 + 8, y + 6, "WHY TRUST THIS PAGE?", 1, 2, INK, bold=True)
+    yy = y + 24
+    for ln in wrap("EVERY ITEM ABOVE WAS REPORTED ON SUNDAY 22 NOV 2026. "
+                   "UNCONFIRMED CLAIMS ARE LABELLED CLAIM.", 51):
+        draw_text(px, x2 + 8, yy, ln, 1, 1, SOFT)
+        yy += 9
+    px.hline(MX, 968, CW, INK, 1)
+    draw_centered(px, W // 2, 974,
+                  "SOURCES: REUTERS \u00b7 AP \u00b7 BBC \u00b7 AL JAZEERA \u00b7 "
+                  "EVERY STORY DATED SUNDAY 22 NOVEMBER 2026",
+                  1, 2, INK, bold=True)
+
+
+def main():
+    px = Canvas()
+    px.fill(0, 0, W, H, CREAM)
+    masthead(px)
+    timeline(px)
+    leads(px)
+    tier2(px)
+    briefs(px)
+    bottom(px)
+    data = png_bytes(px)
+    if os.path.isdir("/output"):
+        path = "/output/entry.png"
     else:
-        # Globe with lat/long arcs + thermometer beside it
-        gcx, gcy = x + 78, y + 43
-        circle(gcx, gcy, 25, BLUE); circle(gcx, gcy, 23, PANEL)
-        # latitude lines (clipped chords)
-        hline(gcx - 20, gcy - 12, 40, BLUE, 2); hline(gcx - 23, gcy, 46, BLUE, 2); hline(gcx - 20, gcy + 12, 40, BLUE, 2)
-        # longitude arcs: vertical line + side arcs approximated by rings segments
-        vline(gcx - 1, gcy - 23, 46, BLUE, 2)
-        ring(gcx, gcy, 12, BLUE, 1)
-        # equator emphasis
-        hline(gcx - 23, gcy - 1, 46, BLUE, 1)
-        # thermometer: tube, bulb, mercury, scale ticks
-        tx = x + 150
-        rect(tx, y + 18, 10, 36, INK); rect(tx + 2, y + 20, 6, 32, PANEL)
-        rect(tx + 3, y + 32, 4, 20, RED)
-        circle(tx + 5, y + 60, 9, INK); circle(tx + 5, y + 60, 6, RED)
-        hline(tx + 12, y + 24, 10, INK, 2); hline(tx + 12, y + 34, 10, INK, 2); hline(tx + 12, y + 44, 10, INK, 2)
-    circle(x + 22, y + 88, 11, RED)
-    draw_text(x + 17, y + 84, str(i + 1), 1, PANEL, True)
-    draw_text(x + 40, y + 84, tag, 1, RED, True)
-    yy = block(x + 10, y + 104, head, 2, 214, INK, lh=18, maxlines=3, bold=True)
-    block(x + 10, yy + 4, det, 1, 214, INK, lh=10, maxlines=4)
-    draw_text(x + 10, y + 240, src, 1, BLUE, True)
+        path = "./entry.png"
+    with open(path, "wb") as fh:
+        fh.write(data)
 
-# ---- Second tier ----
-draw_text(16, 442, "AROUND THE WORLD", 2, RED, True); hline(16, 462, W - 32, INK, 2)
-cells = [
- ("ASIA - SPORT", "INDIA 629-6 IN WELLINGTON", "PANT CENTURY - HIGHEST INDIA TALLY IN NZ."),
- ("AMERICAS - CRIME", "EL CHAPO ISIDRO ARRESTED", "FBI MOST-WANTED CARTEL BOSS HELD IN SHOOT-OUT."),
- ("AMERICAS - SECURITY", "FBI PROBES DATABASE HACK", "APPARENT HACK OF US CRIMINAL DATABASE."),
- ("AMERICAS - HEALTH", "ROUNDUP DEAL APPROVED", "JUDGE OKAYS 7.25BN DOLLAR CANCER SETTLEMENT."),
- ("AMERICAS - POLITICS", "MAMDANI RIKERS PLAN", "NEW YORK JAIL TO CLOSE BY 2032 UNDER PLAN."),
- ("EUROPE - POLITICS", "BLAIR WARNS ON EU RETURN", "UK SHOULD REJOIN ONLY IF IT LEADS ON TECH."),
- ("EUROPE - CULTURE", "CATHERINE ON CANCER FILM", "PRINCESS TALKS OPENLY IN BBC DOCUMENTARY."),
- ("ASIA - POLITICS", "CHAHAL JOINS BJP IN INDIA", "CRICKETER GIVEN ROLE IN PARTY OBC MORCHA."),
- ("MIDDLE EAST - POLITICS", "EX-PM BACKS EISENKOT", "FORMER ISRAELI PM SAYS NO TO NETANYAHU."),
- ("AFRICA - POLITICS", "NIGERIA YOUTH AND 2027", "FEWER YOUNG VOTERS REGISTER THAN IN 2023."),
-]
-for idx, (tag, head, det) in enumerate(cells):
-    col, row = idx % 5, idx // 5
-    x = 16 + col * 195; y = 470 + row * 88
-    rect(x, y, 186, 80, PANEL); box(x, y, 186, 80, GREY, 1)
-    draw_text(x + 7, y + 6, str(idx + 5), 1, RED, True)
-    draw_text(x + 26, y + 6, tag, 1, BLUE, True)
-    yy = block(x + 7, y + 20, head, 1, 172, INK, lh=10, maxlines=2, bold=True)
-    block(x + 7, yy + 2, det, 1, 172, GREY, lh=10, maxlines=3)
 
-# ---- Also on Sunday ----
-draw_text(16, 656, "ALSO ON SUNDAY", 2, RED, True); hline(16, 676, W - 32, INK, 2)
-also = [
- "PERU - 152 HOMES UNINHABITABLE IN REVISED QUAKE INVENTORY",
- "SAUDI ARABIA - FOUR FOG WARNINGS ISSUED, TWO ORANGE",
- "CROATIA - RALLY HELD OVER A PATIENT DEATH",
- "ITALY - DESIGNER PAOLO BULGARI HAS DIED",
- "FIJI - SUNDAY TIMES: COURiers PAID IN METH, PAPER SAYS",
- "FIJI - IRELAND BEAT FIJI A IN RUGBY, SAYS SUNDAY TIMES",
- "PORTUGAL - THOUSANDS MARCH IN LISBON ON LIVING COSTS",
- "USA - FIRST CHILD MEASLES DEATH IN VIRGINIA SINCE 1978",
- "SPACE - VOYAGER 1 NOW ONE LIGHT-DAY FROM EARTH",
- "UN - TALKS TO CONTINUE TOWARD 2028 LETHAL-WEAPONS DEAL",
- "ASIA - JAPAN AND INDIA DEEPEN DEFENCE COOPERATION",
- "TECH - TIKTOK LAUNCHES DEEPFAKE TOOL FOR PUBLIC FIGURES",
- "TRADE - INDIA-CANADA CEPA TALKS ROUND SIX ENDS IN DELHI",
- "INDIA - CHEETAH BIRTHS FOUR CUBS AT KUNO, COUNT NOW 62",
- "USA - NIKHIL GUPTA GIVEN 235 MONTHS IN MURDER PLOT CASE",
- "INDIA - MODI OPENS NITISH SETU AND BIHAR PROJECTS",
- "INDIA - BHASHINI AI PASSES 11 BILLION INFERENCES AT SUMMIT",
- "CULTURE - WASHINGTON HAIR LOCK SELLS FOR 4000 DOLLARS",
-]
-# fix accidental mixed case
-also = [a.replace("COUriers", "COURIERS") for a in also]
-for idx, item in enumerate(also):
-    col, row = idx // 6, idx % 6
-    x = 16 + col * 326; y = 684 + row * 24
-    draw_text(x, y, str(idx + 15) + ".", 1, RED, True)
-    block(x + 28, y, item, 1, 292, INK, lh=10, maxlines=2)
-
-# ---- Date check ----
-y = 836
-rect(16, y, W - 32, 76, TAN); box(16, y, W - 32, 76, RED, 2)
-draw_text(26, y + 8, "DATE CHECK - LEFT OUT ON PURPOSE: BROKE BEFORE SUNDAY", 1, RED, True)
-block(26, y + 24, "ENGLAND 37-12 RECORD WIN OVER ALL BLACKS WAS SATURDAY 21 NOV. NIGERIA FUNERAL BOAT SANK FRIDAY - 24 TOLL CONFIRMED SATURDAY. KYIV BARRAGE, ICJ MYANMAR RULING AND SHENZHEN TRILATERAL WERE ALL 21 NOV.", 1, W - 52, INK, lh=10, maxlines=4)
-
-# ---- Footer ----
-hline(16, 924, W - 32, INK, 2)
-centered(932, "SOURCES: REUTERS - BBC - AP VIA REPORTS - NDTV - INDIA TODAY - FIJI TIMES", 1, BLUE)
-centered(948, "EVERY STORY HERE HAPPENED OR WAS FIRST REPORTED ON SUNDAY 22 NOVEMBER 2026.", 1, INK, True)
-centered(964, "THE WORLD TODAY - SUNDAY EDITION - PAGE ONE OF ONE", 1, GREY)
-
-# ---- PNG encode ----
-raw = b"".join(b"\x00" + bytes(px[y * W * 3:(y + 1) * W * 3]) for y in range(H))
-def chunk(t, d):
-    c = struct.pack(">I", len(d)) + t + d
-    return c + struct.pack(">I", zlib.crc32(t + d) & 0xffffffff)
-png = (b"\x89PNG\r\n\x1a\n"
-       + chunk(b"IHDR", struct.pack(">IIBBBBB", W, H, 8, 2, 0, 0, 0))
-       + chunk(b"IDAT", zlib.compress(raw, 9))
-       + chunk(b"IEND", b""))
-out = os.environ.get("MAKEFUN_OUTPUT_DIR", "/output")
-os.makedirs(out, exist_ok=True)
-with open(os.path.join(out, "entry.png"), "wb") as f:
-    f.write(png)
-print("wrote", os.path.join(out, "entry.png"), len(png))
+if __name__ == "__main__":
+    main()
